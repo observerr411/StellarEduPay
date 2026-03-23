@@ -1,6 +1,6 @@
 const Payment = require('../models/paymentModel');
 const { syncPayments, verifyTransaction } = require('../services/stellarService');
-const { SCHOOL_WALLET } = require('../config/stellarConfig');
+const { SCHOOL_WALLET, ACCEPTED_ASSETS } = require('../config/stellarConfig');
 
 // GET /api/payments/instructions/:studentId
 async function getPaymentInstructions(req, res) {
@@ -9,7 +9,12 @@ async function getPaymentInstructions(req, res) {
     res.json({
       walletAddress: SCHOOL_WALLET,
       memo: studentId,
-      note: 'Include the student ID exactly as the memo when sending payment.',
+      acceptedAssets: Object.values(ACCEPTED_ASSETS).map(a => ({
+        code: a.code,
+        type: a.type,
+        displayName: a.displayName,
+      })),
+      note: 'Include the student ID exactly as the memo when sending payment. Only the listed assets are accepted.',
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -22,6 +27,11 @@ async function verifyPayment(req, res) {
     const { txHash } = req.body;
     const result = await verifyTransaction(txHash);
     if (!result) return res.status(404).json({ error: 'Payment not found or invalid' });
+    if (result.error === 'unsupported_asset') {
+      return res.status(400).json({
+        error: `Unsupported asset: ${result.assetCode}. Accepted assets: ${Object.keys(ACCEPTED_ASSETS).join(', ')}`,
+      });
+    }
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -48,4 +58,18 @@ async function getStudentPayments(req, res) {
   }
 }
 
-module.exports = { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments };
+// GET /api/payments/accepted-assets
+async function getAcceptedAssets(req, res) {
+  try {
+    const assets = Object.values(ACCEPTED_ASSETS).map(a => ({
+      code: a.code,
+      type: a.type,
+      displayName: a.displayName,
+    }));
+    res.json({ assets });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets };
