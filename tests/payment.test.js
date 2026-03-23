@@ -50,10 +50,14 @@ jest.mock('../backend/src/services/stellarService', () => ({
 }));
 
 describe('Payment API', () => {
-  test('GET /api/payments/instructions/:studentId returns wallet info', async () => {
+  test('GET /api/payments/instructions/:studentId returns wallet info with accepted assets', async () => {
     const res = await request(app).get('/api/payments/instructions/STU001');
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('memo', 'STU001');
+    expect(res.body).toHaveProperty('acceptedAssets');
+    expect(Array.isArray(res.body.acceptedAssets)).toBe(true);
+    expect(res.body.acceptedAssets.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.acceptedAssets.some(a => a.code === 'XLM')).toBe(true);
   });
 
   test('POST /api/payments/verify returns transaction with fee validation', async () => {
@@ -111,5 +115,13 @@ describe('Fee Structure API', () => {
     const res = await request(app).post('/api/fees').send({ description: 'No class' });
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('error');
+  });
+
+  test('GET /api/payments/accepted-assets returns list of accepted assets', async () => {
+    const res = await request(app).get('/api/payments/accepted-assets');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('assets');
+    expect(res.body.assets.some(a => a.code === 'XLM')).toBe(true);
+    expect(res.body.assets.some(a => a.code === 'USDC')).toBe(true);
   });
 });
