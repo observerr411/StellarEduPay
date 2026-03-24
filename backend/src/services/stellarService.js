@@ -400,7 +400,15 @@ async function finalizeConfirmedPayments() {
   }
 }
 
-module.exports = { syncPayments, verifyTransaction, validatePaymentAgainstFee, detectMemoCollision, finalizeConfirmedPayments, checkConfirmationStatus };
-module.exports = { syncPayments, verifyTransaction, validatePaymentAgainstFee, detectMemoCollision };
-module.exports = { syncPayments, verifyTransaction, validatePaymentAgainstFee, detectAsset, normalizeAmount, extractValidPayment };
-module.exports = { syncPayments, verifyTransaction, validatePaymentAgainstFee, recordPayment };
+module.exports = {
+  syncPayments,
+  verifyTransaction,
+  recordPayment,
+  validatePaymentAgainstFee,
+  detectMemoCollision,
+  detectAsset,
+  normalizeAmount,
+  extractValidPayment,
+  checkConfirmationStatus,
+  finalizeConfirmedPayments,
+};

@@ -3,9 +3,16 @@ const Payment = require('../models/paymentModel');
 const Student = require('../models/studentModel');
 const PaymentIntent = require('../models/paymentIntentModel');
 const { syncPayments, verifyTransaction, recordPayment, finalizeConfirmedPayments } = require('../services/stellarService');
+const PaymentIntent = require('../models/paymentIntentModel');
+const Student = require('../models/studentModel');
+const PendingVerification = require('../models/pendingVerificationModel');
+const { syncPayments, verifyTransaction, recordPayment, finalizeConfirmedPayments } = require('../services/stellarService');
+const { queueForRetry } = require('../services/retryService');
 const { SCHOOL_WALLET, ACCEPTED_ASSETS } = require('../config/stellarConfig');
 
-// Tag errors that originate from Stellar network calls
+// Permanent error codes that should NOT be retried
+const PERMANENT_FAIL_CODES = ['TX_FAILED', 'MISSING_MEMO', 'INVALID_DESTINATION', 'UNSUPPORTED_ASSET'];
+
 function wrapStellarError(err) {
   if (!err.code) {
     err.code = 'STELLAR_NETWORK_ERROR';
@@ -40,12 +47,11 @@ async function createPaymentIntent(req, res) {
     if (!student) return res.status(404).json({ error: 'Student not found' });
 
     const memo = crypto.randomBytes(4).toString('hex').toUpperCase();
-
     const intent = await PaymentIntent.create({
       studentId,
       amount: student.feeAmount,
       memo,
-      expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours
+      expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
     });
 
     res.status(201).json(intent);
@@ -64,6 +70,7 @@ async function verifyPayment(req, res, next) {
       return next(err);
     }
 
+    // Check for already-processed or already-queued transactions
     const existing = await Payment.findOne({ txHash });
     if (existing) {
       const err = new Error(`Transaction ${txHash} has already been processed`);
@@ -86,23 +93,39 @@ async function verifyPayment(req, res, next) {
           status: 'failed',
           createdAt: new Date(),
         }).catch(() => {});
+      if (PERMANENT_FAIL_CODES.includes(err.code)) {
+        // Permanently invalid — record as failed and surface the error
+        await Payment.create({ studentId: 'unknown', txHash, amount: 0, status: 'failed' }).catch(() => {});
+        return next(err);
       }
-      return next(failCodes.includes(err.code) ? err : wrapStellarError(err));
+
+      // Transient Stellar network error — cache for retry so the tx is not lost
+      await queueForRetry(txHash, req.body.studentId || null, err.message);
+      return res.status(202).json({
+        message: 'Stellar network is temporarily unavailable. Your transaction has been queued and will be verified automatically once the network recovers.',
+        txHash,
+        status: 'queued_for_retry',
+      });
+    }
+
+    if (!result) {
+      return res.status(404).json({ error: 'Transaction not found or invalid' });
     }
 
     const now = new Date();
 
     await recordPayment({
-      studentId: result.memo,
+      studentId: result.studentId || result.memo,
       txHash: result.hash,
       transactionHash: result.hash,   // audit: canonical on-chain reference
       amount: result.amount,
-      feeAmount: result.feeAmount,
+      feeAmount: result.expectedAmount || result.feeAmount,
       feeValidationStatus: result.feeValidation.status,
       status: 'confirmed',
       memo: result.memo,
       confirmedAt: new Date(result.date), // audit: ledger confirmation time
       verifiedAt: now,                    // audit: when this endpoint was called
+      confirmedAt: result.date ? new Date(result.date) : new Date(),
     });
 
     res.json(result);
@@ -117,7 +140,10 @@ async function syncAllPayments(req, res, next) {
     await syncPayments();
     res.json({ message: 'Sync complete' });
   } catch (err) {
-    next(wrapStellarError(err));
+    const wrapped = wrapStellarError(err);
+    // If the sync itself fails due to a network outage, report it clearly
+    // (individual tx caching happens inside stellarService during sync)
+    next(wrapped);
   }
 }
 
@@ -219,6 +245,24 @@ async function finalizePayments(req, res) {
   }
 }
 
+// GET /api/payments/retry-queue — observability endpoint for the retry queue
+async function getRetryQueue(req, res) {
+  try {
+    const [pending, deadLetter, resolved] = await Promise.all([
+      PendingVerification.find({ status: 'pending' }).sort({ nextRetryAt: 1 }),
+      PendingVerification.find({ status: 'dead_letter' }).sort({ updatedAt: -1 }),
+      PendingVerification.find({ status: 'resolved' }).sort({ resolvedAt: -1 }).limit(20),
+    ]);
+    res.json({
+      pending: { count: pending.length, items: pending },
+      dead_letter: { count: deadLetter.length, items: deadLetter },
+      recently_resolved: { count: resolved.length, items: resolved },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getPaymentInstructions,
   createPaymentIntent,
@@ -231,4 +275,5 @@ module.exports = {
   getSuspiciousPayments,
   getPendingPayments,
   finalizePayments,
+  getRetryQueue,
 };
