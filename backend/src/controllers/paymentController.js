@@ -1,5 +1,8 @@
 const crypto = require('crypto');
 const Payment = require('../models/paymentModel');
+const Student = require('../models/studentModel');
+const PaymentIntent = require('../models/paymentIntentModel');
+const { syncPayments, verifyTransaction, recordPayment, finalizeConfirmedPayments } = require('../services/stellarService');
 const PaymentIntent = require('../models/paymentIntentModel');
 const Student = require('../models/studentModel');
 const PendingVerification = require('../models/pendingVerificationModel');
@@ -79,6 +82,17 @@ async function verifyPayment(req, res, next) {
     try {
       result = await verifyTransaction(txHash);
     } catch (err) {
+      const failCodes = ['TX_FAILED', 'MISSING_MEMO', 'INVALID_DESTINATION', 'UNSUPPORTED_ASSET'];
+      if (failCodes.includes(err.code)) {
+        // Record a failed payment for audit purposes
+        await Payment.create({
+          studentId: 'unknown',
+          txHash,
+          transactionHash: txHash,
+          amount: 0,
+          status: 'failed',
+          createdAt: new Date(),
+        }).catch(() => {});
       if (PERMANENT_FAIL_CODES.includes(err.code)) {
         // Permanently invalid — record as failed and surface the error
         await Payment.create({ studentId: 'unknown', txHash, amount: 0, status: 'failed' }).catch(() => {});
@@ -98,14 +112,19 @@ async function verifyPayment(req, res, next) {
       return res.status(404).json({ error: 'Transaction not found or invalid' });
     }
 
+    const now = new Date();
+
     await recordPayment({
       studentId: result.studentId || result.memo,
       txHash: result.hash,
+      transactionHash: result.hash,   // audit: canonical on-chain reference
       amount: result.amount,
       feeAmount: result.expectedAmount || result.feeAmount,
       feeValidationStatus: result.feeValidation.status,
       status: 'confirmed',
       memo: result.memo,
+      confirmedAt: new Date(result.date), // audit: ledger confirmation time
+      verifiedAt: now,                    // audit: when this endpoint was called
       confirmedAt: result.date ? new Date(result.date) : new Date(),
     });
 
