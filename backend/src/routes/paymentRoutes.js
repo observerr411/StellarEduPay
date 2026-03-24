@@ -1,35 +1,47 @@
 const express = require('express');
 const router = express.Router();
-const { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets } = require('../controllers/paymentController');
-const { validateStudentIdParam, validateVerifyPayment } = require('../middleware/validate');
-
-router.get('/accepted-assets', getAcceptedAssets);
-router.get('/instructions/:studentId', validateStudentIdParam, getPaymentInstructions);
-router.get('/:studentId', validateStudentIdParam, getStudentPayments);
-router.post('/verify', validateVerifyPayment, verifyPayment);
-const { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments, getStudentBalance, getSuspiciousPayments, getPendingPayments, finalizePayments } = require('../controllers/paymentController');
-const { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments, getStudentBalance, getSuspiciousPayments } = require('../controllers/paymentController');
-const { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments, getStudentBalance } = require('../controllers/paymentController');
-const { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments } = require('../controllers/paymentController');
 const {
   getPaymentInstructions,
+  createPaymentIntent,
   verifyPayment,
   syncAllPayments,
+  finalizePayments,
   getStudentPayments,
   getAcceptedAssets,
-  createPaymentIntent,
+  getOverpayments,
+  getStudentBalance,
+  getSuspiciousPayments,
+  getPendingPayments,
 } = require('../controllers/paymentController');
+const { validateStudentIdParam, validateVerifyPayment } = require('../middleware/validate');
 
+// Static routes must come before parameterized ones to avoid route shadowing
+  finalizePayments,
+  getRetryQueue,
+} = require('../controllers/paymentController');
+const { validateStudentIdParam, validateVerifyPayment } = require('../middleware/validate');
+
+// Static routes first (before :studentId wildcard)
 router.get('/accepted-assets', getAcceptedAssets);
 router.get('/overpayments', getOverpayments);
 router.get('/suspicious', getSuspiciousPayments);
 router.get('/pending', getPendingPayments);
-router.get('/balance/:studentId', getStudentBalance);
-router.get('/instructions/:studentId', getPaymentInstructions);
-router.get('/:studentId', getStudentPayments);
-router.post('/verify', verifyPayment);
+router.get('/balance/:studentId', validateStudentIdParam, getStudentBalance);
+router.get('/instructions/:studentId', validateStudentIdParam, getPaymentInstructions);
+
+// POST routes
+router.get('/:studentId', validateStudentIdParam, getStudentPayments);
+router.get('/retry-queue', getRetryQueue);
+router.get('/balance/:studentId', validateStudentIdParam, getStudentBalance);
+router.get('/instructions/:studentId', validateStudentIdParam, getPaymentInstructions);
+router.get('/:studentId', validateStudentIdParam, getStudentPayments);
+
+router.post('/intent', createPaymentIntent);
+router.post('/verify', validateVerifyPayment, verifyPayment);
 router.post('/sync', syncAllPayments);
 router.post('/finalize', finalizePayments);
-router.post('/intent', createPaymentIntent);
+
+// Parameterized route last to avoid swallowing static paths
+router.get('/:studentId', validateStudentIdParam, getStudentPayments);
 
 module.exports = router;
