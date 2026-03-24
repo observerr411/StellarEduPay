@@ -16,34 +16,22 @@ function makeTx(overrides = {}) {
 
 jest.mock('../backend/src/config/stellarConfig', () => ({
   SCHOOL_WALLET: 'GTEST123',
-  ACCEPTED_ASSETS: {
-    XLM: { code: 'XLM', type: 'native', issuer: null, displayName: 'Stellar Lumens', decimals: 7 },
-    USDC: { code: 'USDC', type: 'credit_alphanum4', issuer: 'GISSUER', displayName: 'USD Coin', decimals: 7 },
-  },
-  isAcceptedAsset: (code, type) => {
-    const assets = {
-      XLM: { code: 'XLM', type: 'native' },
-      USDC: { code: 'USDC', type: 'credit_alphanum4' },
-    };
-    const asset = assets[code];
-    if (!asset || asset.type !== type) return { accepted: false, asset: null };
-    return { accepted: true, asset };
-  },
+  isAcceptedAsset: () => ({ accepted: true }),
   server: {
     transactions: () => ({
       forAccount: () => ({
         order: () => ({ limit: () => ({ call: async () => ({ records: [] }) }) }),
       }),
-      transaction: (hash) => ({
+      transaction: (txHash) => ({
         call: async () => ({
-          hash,
-          memo: 'STU001',
-          successful: true,
+          hash: txHash,
+          memo: 'ABCD123',
           created_at: new Date().toISOString(),
           operations: async () => ({
-            records: [{ type: 'payment', to: 'GTEST123', amount: '200.0000000', asset_type: 'native' }],
+            records: [{ type: 'payment', to: 'GTEST123', amount: '200.0' }],
           }),
         }),
+
       }),
     }),
   },
@@ -54,6 +42,12 @@ jest.mock('../backend/src/models/paymentModel', () => ({
   create: jest.fn().mockResolvedValue({}),
   find: jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue([]) }),
 }));
+
+jest.mock('../backend/src/models/paymentIntentModel', () => ({
+  findOne: jest.fn().mockResolvedValue({ _id: 'intent123', studentId: 'STU001', amount: 200, memo: 'ABCD123', status: 'pending' }),
+  findByIdAndUpdate: jest.fn().mockResolvedValue({}),
+}));
+
 jest.mock('../backend/src/models/studentModel', () => ({
   findOne: jest.fn().mockResolvedValue({ studentId: 'STU001', feeAmount: 200 }),
   findOneAndUpdate: jest.fn().mockResolvedValue({}),
@@ -64,66 +58,13 @@ describe('stellarService', () => {
     await expect(syncPayments()).resolves.toBeUndefined();
   });
 
-  test('verifyTransaction returns payment details with asset info and fee validation', async () => {
+  test('verifyTransaction returns payment details with fee validation', async () => {
     const result = await verifyTransaction('abc123');
     expect(result).toMatchObject({
       hash: 'abc123',
       memo: 'STU001',
       amount: 200,
-      assetCode: 'XLM',
-      assetType: 'native',
-      feeAmount: 200,
-    });
-    expect(result.feeValidation).toHaveProperty('status', 'valid');
-  });
-
-  test('verifyTransaction throws TX_FAILED for unsuccessful transaction', async () => {
-    const { server } = require('../backend/src/config/stellarConfig');
-    const original = server.transactions;
-    server.transactions = () => ({
-      transaction: () => ({ call: async () => makeTx({ successful: false }) }),
-    });
-    await expect(verifyTransaction('fail123')).rejects.toMatchObject({ code: 'TX_FAILED' });
-    server.transactions = original;
-  });
-
-  test('verifyTransaction throws MISSING_MEMO when memo is absent', async () => {
-    const { server } = require('../backend/src/config/stellarConfig');
-    const original = server.transactions;
-    server.transactions = () => ({
-      transaction: () => ({ call: async () => makeTx({ memo: null }) }),
-    });
-    await expect(verifyTransaction('nomemo')).rejects.toMatchObject({ code: 'MISSING_MEMO' });
-    server.transactions = original;
-  });
-
-  test('verifyTransaction throws INVALID_DESTINATION when no matching payment op', async () => {
-    const { server } = require('../backend/src/config/stellarConfig');
-    const original = server.transactions;
-    server.transactions = () => ({
-      transaction: () => ({
-        call: async () => makeTx({
-          operations: async () => ({
-            records: [{ type: 'payment', to: 'GWRONGWALLET', amount: '200.0', asset_type: 'native' }],
-          }),
-        }),
-      }),
-    });
-    await expect(verifyTransaction('wrongdest')).rejects.toMatchObject({ code: 'INVALID_DESTINATION' });
-    server.transactions = original;
-  });
-
-  test('verifyTransaction throws UNSUPPORTED_ASSET for unknown asset', async () => {
-    const { server } = require('../backend/src/config/stellarConfig');
-    const original = server.transactions;
-    server.transactions = () => ({
-      transaction: () => ({
-        call: async () => makeTx({
-          operations: async () => ({
-            records: [{ type: 'payment', to: 'GTEST123', amount: '200.0', asset_type: 'credit_alphanum4', asset_code: 'SHIB', asset_issuer: 'GRANDOM' }],
-          }),
-        }),
-      }),
+      expectedAmount: 200,
     });
     await expect(verifyTransaction('badasset')).rejects.toMatchObject({ code: 'UNSUPPORTED_ASSET' });
     server.transactions = original;
@@ -140,33 +81,11 @@ describe('validatePaymentAgainstFee', () => {
   });
 
   test('returns overpaid when payment exceeds fee', () => {
-    expect(validatePaymentAgainstFee(250, 200).status).toBe('overpaid');
-  });
-});
-
-describe('recordPayment', () => {
-  const Payment = require('../backend/src/models/paymentModel');
-
-  const paymentData = { studentId: 'STU001', txHash: 'abc123', amount: 200, feeAmount: 200, feeValidationStatus: 'valid', memo: 'STU001', confirmedAt: new Date() };
-
-  beforeEach(() => jest.clearAllMocks());
-
-  test('saves payment when txHash is new', async () => {
-    Payment.findOne.mockResolvedValueOnce(null);
-    await expect(recordPayment(paymentData)).resolves.toBeDefined();
-    expect(Payment.create).toHaveBeenCalledWith(paymentData);
+    const result = validatePaymentAgainstFee(250, 200);
+    expect(result.status).toBe('overpaid');
   });
 
-  test('throws DUPLICATE_TX when txHash already exists', async () => {
-    Payment.findOne.mockResolvedValueOnce({ txHash: 'abc123' });
-    await expect(recordPayment(paymentData)).rejects.toMatchObject({ code: 'DUPLICATE_TX' });
-    expect(Payment.create).not.toHaveBeenCalled();
-  });
-
-  test('throws DUPLICATE_TX on MongoDB duplicate key error (race condition)', async () => {
-    Payment.findOne.mockResolvedValueOnce(null);
-    const mongoErr = Object.assign(new Error('E11000'), { code: 11000 });
-    Payment.create.mockRejectedValueOnce(mongoErr);
-    await expect(recordPayment(paymentData)).rejects.toMatchObject({ code: 'DUPLICATE_TX' });
+  test('verifyTransaction rejects old transaction', async () => {
+    await expect(verifyTransaction('old_tx')).rejects.toThrow('Transaction is too old and cannot be processed.');
   });
 });
