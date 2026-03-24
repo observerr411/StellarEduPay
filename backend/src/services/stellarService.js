@@ -93,6 +93,28 @@ async function syncPayments() {
 
     const paymentAmount = parseFloat(payOp.amount);
 
+    // Aggregate all previous payments for this student
+    const previousPayments = await Payment.aggregate([
+      { $match: { studentId: memo } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]);
+    const previousTotal = previousPayments.length ? previousPayments[0].total : 0;
+    const cumulativeTotal = parseFloat((previousTotal + paymentAmount).toFixed(7));
+    const remaining = parseFloat((student.feeAmount - cumulativeTotal).toFixed(7));
+
+    // Determine cumulative validation status
+    let cumulativeStatus;
+    if (cumulativeTotal < student.feeAmount) {
+      cumulativeStatus = 'underpaid';
+    } else if (cumulativeTotal > student.feeAmount) {
+      cumulativeStatus = 'overpaid';
+    } else {
+      cumulativeStatus = 'valid';
+    }
+
+    const excessAmount = cumulativeStatus === 'overpaid'
+      ? parseFloat((cumulativeTotal - student.feeAmount).toFixed(7))
+      : 0;
     // Validate payment amount against the intent expected amount
     const feeValidation = validatePaymentAgainstFee(paymentAmount, intent.amount);
 
@@ -100,6 +122,9 @@ async function syncPayments() {
       studentId: intent.studentId,
       txHash: tx.hash,
       amount: paymentAmount,
+      feeAmount: student.feeAmount,
+      feeValidationStatus: cumulativeStatus,
+      excessAmount,
       feeAmount: intent.amount,
       feeValidationStatus: feeValidation.status,
       excessAmount: feeValidation.excessAmount,
@@ -108,6 +133,15 @@ async function syncPayments() {
       confirmedAt: new Date(tx.created_at),
     });
 
+    // Update student's running totals
+    await Student.findOneAndUpdate(
+      { studentId: memo },
+      {
+        totalPaid: cumulativeTotal,
+        remainingBalance: remaining < 0 ? 0 : remaining,
+        feePaid: cumulativeTotal >= student.feeAmount,
+      }
+    );
     // Mark intent as completed
     await PaymentIntent.findByIdAndUpdate(intent._id, { status: 'completed' });
 

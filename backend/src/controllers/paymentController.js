@@ -147,6 +147,40 @@ async function getOverpayments(req, res) {
   }
 }
 
+// GET /api/payments/balance/:studentId
+async function getStudentBalance(req, res) {
+  try {
+    const Student = require('../models/studentModel');
+    const { studentId } = req.params;
+    const student = await Student.findOne({ studentId });
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+
+    const result = await Payment.aggregate([
+      { $match: { studentId } },
+      { $group: { _id: null, totalPaid: { $sum: '$amount' }, count: { $sum: 1 } } },
+    ]);
+
+    const totalPaid = result.length ? parseFloat(result[0].totalPaid.toFixed(7)) : 0;
+    const remainingBalance = parseFloat(Math.max(0, student.feeAmount - totalPaid).toFixed(7));
+    const excessAmount = totalPaid > student.feeAmount
+      ? parseFloat((totalPaid - student.feeAmount).toFixed(7))
+      : 0;
+
+    res.json({
+      studentId,
+      feeAmount: student.feeAmount,
+      totalPaid,
+      remainingBalance,
+      excessAmount,
+      feePaid: totalPaid >= student.feeAmount,
+      installmentCount: result.length ? result[0].count : 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments, getStudentBalance };
 module.exports = { getPaymentInstructions, verifyPayment, syncAllPayments, getStudentPayments, getAcceptedAssets, getOverpayments };
 module.exports = {
   getPaymentInstructions,
