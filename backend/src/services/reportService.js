@@ -9,7 +9,7 @@ const Student = require('../models/studentModel');
  * @returns {Promise<Array>}
  */
 async function aggregateByDate({ startDate, endDate } = {}) {
-  const match = { status: 'confirmed' };
+  const match = { status: 'SUCCESS' };
 
   if (startDate || endDate) {
     match.confirmedAt = {};
@@ -83,7 +83,7 @@ async function generateReport({ startDate, endDate } = {}) {
   );
 
   // Count students who have fully paid within the period
-  const match = { status: 'confirmed' };
+  const match = { status: 'SUCCESS' };
   if (startDate || endDate) {
     match.confirmedAt = {};
     if (startDate) match.confirmedAt.$gte = new Date(startDate);

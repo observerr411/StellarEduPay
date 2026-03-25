@@ -35,6 +35,21 @@ GET /api/students/:studentId
 
 ## Payments
 
+### Submit a signed transaction
+```
+POST /api/payments/submit
+```
+Body:
+```json
+{ "xdr": "AAAA..." }
+```
+> The backend decodes this XDR, records a `SUBMITTED` trail, and pushes it to the Stellar ecosystem.
+
+Response `200`:
+```json
+{ "verified": true, "hash": "abc...", "ledger": 1234, "status": "SUCCESS" }
+```
+
 ### Get payment instructions
 ```
 GET /api/payments/instructions/:studentId
