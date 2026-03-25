@@ -20,6 +20,7 @@ const database = require('./config/database');
 const { concurrentPaymentProcessor } = require('./services/concurrentPaymentProcessor');
 const { createConcurrentRequestMiddleware } = require('./middleware/concurrentRequestHandler');
 const { requestLogger } = require('./middleware/requestLogger');
+const logger = require('./utils/logger');
 
 const app = express();
 
@@ -58,7 +59,7 @@ app.use((req, res, next) => {
 });
 
 async function gracefulShutdown(signal) {
-  console.log(`[App] ${signal} received, shutting down gracefully`);
+  logger.info(`${signal} received, shutting down gracefully`);
   
   stopPolling();
   if (startRetryWorker && startRetryWorker.stop) {
@@ -67,9 +68,9 @@ async function gracefulShutdown(signal) {
   
   try {
     await database.disconnect();
-    console.log('[App] Database disconnected');
+    logger.info('Database disconnected');
   } catch (error) {
-    console.error('[App] Error disconnecting database:', error.message);
+    logger.error('Error disconnecting database', { error: error.message });
   }
   
   process.exit(0);
@@ -78,10 +79,10 @@ async function gracefulShutdown(signal) {
 async function initializeDatabase() {
   try {
     await database.connect();
-    console.log('MongoDB connected with connection pooling');
+    logger.info('MongoDB connected with connection pooling');
     return true;
   } catch (error) {
-    console.error('MongoDB connection error:', error.message);
+    logger.error('MongoDB connection error', { error: error.message });
     return false;
   }
 }
@@ -94,12 +95,70 @@ async function initializeServices() {
   try {
     await initializeRetryQueue(app);
     setupMonitoring(60000);
-    console.log('All services initialized successfully');
+    logger.info('All services initialized successfully');
   } catch (error) {
     console.error('Failed to initialize retry queue system:', error);
   }
 }
 
+    logger.error('Failed to initialize retry queue system', { error: error.message });
+    // Don't crash the app if BullMQ fails - continue with existing retry service
+  }
+}
+
+// ── Startup ─────────────────────────────────────────────────────────────────────
+async function startApp() {
+  const dbConnected = await initializeDatabase();
+  
+  if (!dbConnected) {
+    logger.error('Failed to connect to database. Exiting...');
+    process.exit(1);
+  }
+  
+  await initializeServices();
+  
+  // Handle shutdown signals
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  
+  logger.info('Application startup complete');
+}
+
+// Start the application
+startApp();
+// MongoDB connection and service startup
+// ── Request timeout ───────────────────────────────────────────────────────────
+// If a response has not been sent within REQUEST_TIMEOUT_MS, reply 503.
+app.use((req, res, next) => {
+  res.setTimeout(config.REQUEST_TIMEOUT_MS, () => {
+    const err = new Error(`Request timed out after ${config.REQUEST_TIMEOUT_MS}ms`);
+    err.code = 'REQUEST_TIMEOUT';
+    next(err);
+  });
+  next();
+});
+
+mongoose.connect(config.MONGO_URI)
+  .then(async () => {
+    logger.info('MongoDB connected');
+
+    // Start existing services
+    startPolling();
+    startConsistencyScheduler();
+    startRetryWorker();
+
+    // Initialize BullMQ retry queue system
+    try {
+      await initializeRetryQueue(app);
+      setupMonitoring(60000);
+      logger.info('All services initialized successfully');
+    } catch (error) {
+      logger.error('Failed to initialize retry queue system', { error: error.message });
+    }
+  })
+  .catch(err => logger.error('MongoDB error', { error: err.message }));
+
+// Schools — no school context needed (these ARE schools)
 app.use('/api/schools', schoolRoutes);
 app.use('/api/students',  studentRoutes);
 app.use('/api/payments',  paymentRoutes);
@@ -112,12 +171,16 @@ app.get('/health', async (req, res) => {
     const retryQueueStatus = await getSystemStatus();
     res.json({
       status: 'ok',
+      network: config.STELLAR_NETWORK,
+      horizonUrl: config.HORIZON_URL,
       retryQueue: retryQueueStatus,
       timestamp: new Date.now().toISOString(),
     });
   } catch (error) {
     res.json({
       status: 'ok',
+      network: config.STELLAR_NETWORK,
+      horizonUrl: config.HORIZON_URL,
       retryQueue: { error: error.message },
       timestamp: new Date.now().toISOString(),
     });
@@ -131,6 +194,7 @@ app.use((err, req, res, next) => {
     INVALID_DESTINATION:    400,
     UNSUPPORTED_ASSET:      400,
     VALIDATION_ERROR:       400,
+    UNDERPAID:              400,
     MISSING_SCHOOL_CONTEXT: 400,
     MISSING_IDEMPOTENCY_KEY:400,
     DUPLICATE_TX:           409,
@@ -142,7 +206,7 @@ app.use((err, req, res, next) => {
     REQUEST_TIMEOUT:        503,
   };
   const status = statusMap[err.code] || err.status || 500;
-  console.error(`[${err.code || 'ERROR'}] ${err.message}`);
+  logger.error('Request error', { code: err.code || 'INTERNAL_ERROR', message: err.message, requestId: req.requestId, status });
   res.status(status).json({ error: err.message, code: err.code || 'INTERNAL_ERROR' });
 });
 
@@ -151,6 +215,34 @@ async function startApp() {
   
   if (!dbConnected) {
     console.error('Failed to connect to database. Exiting...');
+const PORT = config.PORT;
+const server = app.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
+
+// ── Graceful shutdown ──────────────────────────────────────────────────────────
+async function shutdown(signal) {
+  logger.info(`Received ${signal} — starting graceful shutdown`);
+
+  stopPolling();
+  stopRetryWorker();
+
+  const deadline = Date.now() + 8_000;
+  while (isRetryWorkerRunning() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  server.close(async () => {
+    try {
+      await mongoose.connection.close();
+      logger.info('MongoDB disconnected — clean exit');
+      process.exit(0);
+    } catch (err) {
+      logger.error('Error closing MongoDB', { error: err.message });
+      process.exit(1);
+    }
+  });
+
+  setTimeout(() => {
+    logger.error('Forced exit after timeout');
     process.exit(1);
   }
   
