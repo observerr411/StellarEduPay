@@ -42,6 +42,7 @@ const {
   enrichPaymentWithConversion,
   getCachedRates,
 } = require('../services/currencyConversionService');
+const { buildTransactionExplorerUrl } = require('../utils/stellarExplorer');
 const crypto = require('crypto');
 
 const PERMANENT_FAIL_CODES = ['TX_FAILED', 'MISSING_MEMO', 'INVALID_DESTINATION', 'UNSUPPORTED_ASSET'];
@@ -200,6 +201,7 @@ async function submitTransaction(req, res, next) {
     res.json({
       verified: true,
       hash: transactionHash,
+      explorerUrl: buildTransactionExplorerUrl(transactionHash),
       ledger: txResponse.ledger,
       status: 'SUCCESS'
     });
@@ -351,6 +353,7 @@ async function verifyPayment(req, res, next) {
     res.json({
       verified: true,
       hash: result.hash,
+      explorerUrl: buildTransactionExplorerUrl(result.hash),
       memo: result.memo,
       studentId: result.studentId,
       amount: result.amount,
@@ -450,7 +453,10 @@ async function getStudentPayments(req, res, next) {
     const enriched = await Promise.all(
       payments.map(p => enrichPaymentWithConversion(p, targetCurrency))
     );
-    res.json(enriched);
+    res.json(enriched.map((payment) => ({
+      ...payment,
+      explorerUrl: buildTransactionExplorerUrl(payment.transactionHash || payment.txHash),
+    })));
   } catch (err) {
     next(err);
   }

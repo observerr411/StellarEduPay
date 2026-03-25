@@ -1,6 +1,7 @@
 'use strict';
 
 const mongoose = require('mongoose');
+const { buildTransactionExplorerUrl } = require('../utils/stellarExplorer');
 
 const paymentSchema = new mongoose.Schema({
   studentId: { type: String, required: true, index: true },
@@ -63,9 +64,8 @@ const paymentSchema = new mongoose.Schema(
 paymentSchema.index({ studentId: 1, createdAt: -1 });
 
 paymentSchema.virtual('explorerUrl').get(function() {
-  if (!this.transactionHash) return null;
-  // Assumes testnet by default, could be dynamic based on config if needed
-  return `https://stellar.expert/explorer/testnet/tx/${this.transactionHash}`;
+  const hash = this.transactionHash || this.txHash;
+  return buildTransactionExplorerUrl(hash);
 });
 
 paymentSchema.pre('save', async function(next) {
