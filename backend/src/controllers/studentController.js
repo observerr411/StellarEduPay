@@ -2,21 +2,20 @@
 
 const Student = require('../models/studentModel');
 const FeeStructure = require('../models/feeStructureModel');
+const { get, set, del, KEYS, TTL } = require('../cache');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
 
-// POST /api/students
 async function registerStudent(req, res, next) {
   try {
     const { schoolId } = req;
-    const { schoolId } = req; // injected by resolveSchool middleware
     let { studentId, name, class: className, feeAmount } = req.body;
+
     if (!studentId) {
       const { generateStudentId } = require('../utils/generateStudentId');
       studentId = await generateStudentId();
     }
 
-    // Exact duplicate check by studentId (school-scoped)
     const existingStudent = await Student.findOne({ schoolId, studentId });
     if (existingStudent) {
       const err = new Error(`A student with ID "${studentId}" already exists`);
@@ -24,7 +23,6 @@ async function registerStudent(req, res, next) {
       return next(err);
     }
 
-    // Fuzzy duplicate check (same name + class, case-insensitive, school-scoped)
     const escapedName = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const similarStudent = await Student.findOne({
       schoolId,
@@ -48,9 +46,7 @@ async function registerStudent(req, res, next) {
     }
 
     const student = await Student.create({ schoolId, studentId, name, class: className, feeAmount: assignedFee });
-    res.status(201).json(student);
 
-    // Invalidate student list cache since a new student was added
     del(KEYS.studentsAll());
 
     const response = student.toObject ? student.toObject() : { ...student };
@@ -69,7 +65,6 @@ async function registerStudent(req, res, next) {
   }
 }
 
-// GET /api/students
 async function getAllStudents(req, res, next) {
   try {
     const cacheKey = KEYS.studentsAll();
@@ -84,10 +79,8 @@ async function getAllStudents(req, res, next) {
   }
 }
 
-// GET /api/students/:studentId
 async function getStudent(req, res, next) {
   try {
-    const student = await Student.findOne({ schoolId: req.schoolId, studentId: req.params.studentId });
     const { studentId } = req.params;
     const cacheKey = KEYS.student(studentId);
     const cached = get(cacheKey);
@@ -99,13 +92,14 @@ async function getStudent(req, res, next) {
       err.code = 'NOT_FOUND';
       return next(err);
     }
+
+    set(cacheKey, student, TTL.STUDENT);
     res.json(student);
   } catch (err) {
     next(err);
   }
 }
 
-// GET /api/students/summary
 async function getPaymentSummary(req, res, next) {
   try {
     const Payment = require('../models/paymentModel');
@@ -142,12 +136,11 @@ async function getPaymentSummary(req, res, next) {
     const counts = summary.reduce((acc, s) => { acc[s.status] = (acc[s.status] || 0) + 1; return acc; }, {});
 
     res.json({ total: students.length, counts, students: summary });
-// ── Helpers for bulk import ─────────────────────────────────────────────────────
+  } catch (err) {
+    next(err);
+  }
+}
 
-/**
- * Parse a CSV buffer into an array of row objects.
- * Expected columns: studentId, name, class, feeAmount
- */
 function parseCsvBuffer(buffer) {
   return new Promise((resolve, reject) => {
     const rows = [];
@@ -182,26 +175,14 @@ function validateStudentRow(row, index) {
   return errors;
 }
 
-/**
- * POST /api/students/bulk
- *
- * Accepts either:
- *   - A CSV file upload (multipart/form-data, field name "file")
- *   - A JSON body with { students: [...] }
- *
- * Returns per-record results detailing successes and failures.
- */
 async function bulkImportStudents(req, res, next) {
   try {
     const { schoolId } = req;
     let rows;
 
-    // ── Determine input format ────────────────────────────────────────────────
     if (req.file) {
-      // CSV file upload via multer
       rows = await parseCsvBuffer(req.file.buffer);
     } else if (req.body && Array.isArray(req.body.students)) {
-      // JSON array in body
       rows = req.body.students;
     } else {
       return res.status(400).json({
@@ -226,7 +207,6 @@ async function bulkImportStudents(req, res, next) {
         continue;
       }
 
-      // Resolve fee from fee structure if not provided
       let assignedFee = row.feeAmount != null && row.feeAmount !== '' ? Number(row.feeAmount) : null;
       if (assignedFee == null && row.class) {
         const feeStructure = await FeeStructure.findOne({ schoolId, className: row.class.trim(), isActive: true });
@@ -263,11 +243,12 @@ async function bulkImportStudents(req, res, next) {
       }
     }
 
+    del(KEYS.studentsAll());
+
     res.status(results.failed === results.total ? 400 : 201).json(results);
   } catch (err) {
     next(err);
   }
 }
 
-module.exports = { registerStudent, getAllStudents, getStudent, getPaymentSummary };
-module.exports = { registerStudent, getAllStudents, getStudent, bulkImportStudents };
+module.exports = { registerStudent, getAllStudents, getStudent, getPaymentSummary, bulkImportStudents };
