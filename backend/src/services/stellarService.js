@@ -115,6 +115,12 @@ async function syncPayments() {
     const intent = await PaymentIntent.findOne({ memo, status: 'pending' });
     if (!intent) continue;
 
+    // Reject expired intents
+    if (intent.expiresAt && intent.expiresAt < new Date(tx.created_at)) {
+      await PaymentIntent.findByIdAndUpdate(intent._id, { status: 'expired' });
+      continue;
+    }
+
     const student = await Student.findOne({ studentId: intent.studentId });
     if (!student) continue;
 

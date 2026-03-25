@@ -113,7 +113,9 @@ async function createPaymentIntent(req, res, next) {
     }
 
     const memo = crypto.randomBytes(4).toString('hex').toUpperCase();
-    
+    const ttlMs = parseInt(process.env.PAYMENT_INTENT_TTL_MS, 10) || 24 * 60 * 60 * 1000;
+    const expiresAt = new Date(Date.now() + ttlMs);
+
     // We now use the Payment model to track the initial 'PENDING' intent.
     const payment = await Payment.create({
       studentId: student._id,
@@ -123,6 +125,7 @@ async function createPaymentIntent(req, res, next) {
       amount: student.feeAmount,
       memo,
       status: 'PENDING',
+      expiresAt,
       startedAt: new Date(),
     });
 
@@ -308,6 +311,18 @@ async function verifyPayment(req, res, next) {
     const studentObj = await Student.findOne({ studentId: studentStrId });
     if (!studentObj) {
       return res.status(404).json({ error: 'Associated student not found. Cannot record transaction.' });
+    }
+
+    // Reject if the payment intent has expired
+    const intent = await PaymentIntent.findOne({ memo: result.memo, schoolId });
+    if (intent) {
+      if (intent.expiresAt && intent.expiresAt < new Date()) {
+        await PaymentIntent.findByIdAndUpdate(intent._id, { status: 'expired' });
+        const err = new Error('Payment intent has expired. Please request new payment instructions.');
+        err.code = 'INTENT_EXPIRED';
+        err.status = 410;
+        return next(err);
+      }
     }
 
     await recordPayment({
