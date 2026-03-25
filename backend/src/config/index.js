@@ -9,6 +9,14 @@
  * (scripts/migrate-default-school.js) which seeds the first school from it.
  */
 
+'use strict';
+
+// ── Required variables ────────────────────────────────────────────────────────
+const REQUIRED = [
+  'MONGO_URI',
+  'SCHOOL_WALLET_ADDRESS',
+  'STELLAR_NETWORK_PASSPHRASE',
+];
 const REQUIRED = ['MONGO_URI'];
 
 const missing = REQUIRED.filter((key) => !process.env[key]);
@@ -23,6 +31,8 @@ const PORT            = parseInt(process.env.PORT || '5000', 10);
 const MONGO_URI       = process.env.MONGO_URI;
 const STELLAR_NETWORK = process.env.STELLAR_NETWORK || 'testnet';
 const IS_TESTNET      = STELLAR_NETWORK !== 'mainnet';
+
+const STELLAR_NETWORK_PASSPHRASE = process.env.STELLAR_NETWORK_PASSPHRASE;
 
 const HORIZON_URL =
   process.env.HORIZON_URL ||
@@ -43,6 +53,9 @@ const POLL_INTERVAL_MS       = parseInt(process.env.POLL_INTERVAL_MS || '30000',
 // ── Polling ───────────────────────────────────────────────────────────────────
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '30000', 10);
 
+// ── Retry Service ─────────────────────────────────────────────────────────────
+const RETRY_INTERVAL_MS = parseInt(process.env.RETRY_INTERVAL_MS || '60000', 10);
+const RETRY_MAX_ATTEMPTS = parseInt(process.env.RETRY_MAX_ATTEMPTS || '10', 10);
 // ── Payment Limits ────────────────────────────────────────────────────────────
 // Minimum payment amount (default: 0.01 XLM/USDC)
 const MIN_PAYMENT_AMOUNT = parseFloat(process.env.MIN_PAYMENT_AMOUNT || '0.01');
@@ -72,11 +85,14 @@ const config = Object.freeze({
   MONGO_URI,
   STELLAR_NETWORK,
   IS_TESTNET,
+  STELLAR_NETWORK_PASSPHRASE,
   HORIZON_URL,
   SCHOOL_WALLET_ADDRESS,
   USDC_ISSUER,
   CONFIRMATION_THRESHOLD,
   POLL_INTERVAL_MS,
+  RETRY_INTERVAL_MS,
+  RETRY_MAX_ATTEMPTS,
   MIN_PAYMENT_AMOUNT,
   MAX_PAYMENT_AMOUNT,
   REQUEST_TIMEOUT_MS,

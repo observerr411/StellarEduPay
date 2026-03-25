@@ -297,6 +297,15 @@ npm install
 
 Create a `.env` file in the `backend/` directory:
 
+Create your local environment file by copying the unified template:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and configure your credentials (e.g., set `SCHOOL_WALLET_ADDRESS` slightly generated above).
+
+For the frontend, specify the backend API URL in **`frontend/.env.local`**:
 ```bash
 cd backend
 cp .env.example .env
