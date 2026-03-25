@@ -16,10 +16,16 @@ jest.mock('mongoose', () => ({
   model: jest.fn().mockReturnValue({}),
 }));
 
+// A valid 24-char hex MongoDB ObjectId used wherever the DB _id is required.
+// Declared as a const for use in test bodies. The literal is also inlined
+// inside jest.mock() factories below because Jest hoists those calls above
+// const declarations, which would make the variable undefined inside the factory.
+const MOCK_STUDENT_OBJ_ID = '507f1f77bcf86cd799439011';
+
 jest.mock('../backend/src/models/studentModel', () => ({
-  create: jest.fn().mockResolvedValue({ studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
-  find: jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue([{ studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }]) }),
-  findOne: jest.fn().mockResolvedValue({ studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
+  create: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
+  find: jest.fn().mockReturnValue({ sort: jest.fn().mockResolvedValue([{ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }]) }),
+  findOne: jest.fn().mockResolvedValue({ _id: '507f1f77bcf86cd799439011', studentId: 'STU001', name: 'Alice', class: '5A', feeAmount: 200, feePaid: false }),
   findOneAndUpdate: jest.fn().mockResolvedValue({}),
 }));
 
@@ -216,6 +222,8 @@ describe('Payment Intent API', () => {
 ,  test('POST /api/v1/payments/intent — creates a payment intent', async () => {
     const res = await request(app).post('/api/v1/payments/intent').send({ studentId: 'STU001' });
   test('POST /api/payments/intent — creates a payment intent', async () => {
+    // studentId must be a valid 24-char hex MongoDB ObjectId (enforced by Joi middleware)
+    const res = await request(app).post('/api/payments/intent').send({ studentId: MOCK_STUDENT_OBJ_ID });
     const res = await request(app)
       .post('/api/payments/intent')
       .set('Idempotency-Key', 'test-intent-stu001')
@@ -226,6 +234,31 @@ describe('Payment Intent API', () => {
     expect(res.body).toHaveProperty('studentId', 'STU001');
   });
 
+  test('POST /api/payments/intent — 400 for invalid studentId format', async () => {
+    // 'UNKNOWN' is not a 24-char hex ObjectId — Joi must reject it before the controller
+    const res = await request(app).post('/api/payments/intent').send({ studentId: 'UNKNOWN' });
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('errors');
+    expect(res.body.errors[0]).toHaveProperty('field', 'studentId');
+  });
+
+  test('POST /api/payments/intent — 400 for amount below minimum threshold', async () => {
+    const res = await request(app).post('/api/payments/intent').send({ studentId: MOCK_STUDENT_OBJ_ID, amount: 0.5 });
+    expect(res.status).toBe(400);
+    expect(res.body.errors[0]).toHaveProperty('field', 'amount');
+  });
+
+  test('POST /api/payments/intent — 400 for unsupported currency', async () => {
+    const res = await request(app).post('/api/payments/intent').send({ studentId: MOCK_STUDENT_OBJ_ID, currency: 'BTC' });
+    expect(res.status).toBe(400);
+    expect(res.body.errors[0]).toHaveProperty('field', 'currency');
+  });
+
+  test('POST /api/payments/submit — 400 when xdr is missing', async () => {
+    const res = await request(app).post('/api/payments/submit').send({});
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('errors');
+    expect(res.body.errors[0]).toHaveProperty('field', 'xdr');
   test('POST /api/v1/payments/intent — 404 for unknown student', async () => {
     const Student = require('../backend/src/models/studentModel');
     Student.findOne.mockResolvedValueOnce(null);
