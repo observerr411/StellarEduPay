@@ -6,6 +6,7 @@ const Student = require('../models/studentModel');
 const PaymentIntent = require('../models/paymentIntentModel');
 const { validatePaymentAmount } = require('../utils/paymentLimits');
 const { generateReferenceCode } = require('../utils/generateReferenceCode');
+const { decryptMemo } = require('../utils/memoEncryption');
 const logger = require('../utils/logger').child('StellarService');
 
 function detectAsset(payOp) {
@@ -29,8 +30,10 @@ function normalizeAmount(rawAmount) {
 async function extractValidPayment(tx, walletAddress) {
   if (!tx.successful) return null;
 
-  const memo = tx.memo ? tx.memo.trim() : null;
-  if (!memo) return null;
+  const rawMemo = tx.memo ? tx.memo.trim() : null;
+  if (!rawMemo) return null;
+
+  const memo = decryptMemo(rawMemo);
 
   const ops = await tx.operations();
   const payOp = ops.records.find(op => op.type === 'payment' && op.to === walletAddress);
@@ -171,22 +174,6 @@ async function recordPayment(data) {
   }
 }
 
-async function verifyTransaction(txHash) {
-  const tx = await server.transactions().transaction(txHash).call();
-  const valid = await extractValidPayment(tx);
-  if (!valid) return null;
-
-  const { payOp, memo, asset } = valid;
-  const amount = normalizeAmount(payOp.amount);
-
-/**
- * Verify a single transaction hash against a specific school wallet.
- * Throws structured errors for all failure cases so the controller can handle them uniformly.
- *
- * @param {string} txHash        - 64-char hex transaction hash
- * @param {string} walletAddress - the school's Stellar wallet address
- * @returns {object|null} Verified transaction details, or null if no valid payment found
- */
 async function verifyTransaction(txHash, walletAddress) {
   const tx = await server.transactions().transaction(txHash).call();
 
@@ -197,12 +184,14 @@ async function verifyTransaction(txHash, walletAddress) {
     throw err;
   }
 
-  const memo = tx.memo ? tx.memo.trim() : null;
-  if (!memo) {
+  const rawMemo = tx.memo ? tx.memo.trim() : null;
+  if (!rawMemo) {
     const err = new Error('Transaction memo is missing or empty — cannot identify student');
     err.code = 'MISSING_MEMO';
     throw err;
   }
+
+  const memo = decryptMemo(rawMemo);
 
   const ops = await tx.operations();
   const payOp = ops.records.find(op => op.type === 'payment' && op.to === walletAddress);

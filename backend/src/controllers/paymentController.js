@@ -23,24 +23,16 @@ const {
   finalizeConfirmedPayments,
 } = require('../services/stellarService');
 const { queueForRetry } = require('../services/retryService');
-const { SCHOOL_WALLET, ACCEPTED_ASSETS, server } = require('../config/stellarConfig');
+const { ACCEPTED_ASSETS, server } = require('../config/stellarConfig');
 const StellarSdk = require('@stellar/stellar-sdk');
-
-const { SCHOOL_WALLET, ACCEPTED_ASSETS } = require('../config/stellarConfig');
 const { getPaymentLimits } = require('../utils/paymentLimits');
-const crypto = require('crypto');
-
-// Permanent error codes that should NOT be retried
-const PERMANENT_FAIL_CODES = ['TX_FAILED', 'MISSING_MEMO', 'INVALID_DESTINATION', 'UNSUPPORTED_ASSET', 'AMOUNT_TOO_LOW', 'AMOUNT_TOO_HIGH', 'UNDERPAID'];
-const { ACCEPTED_ASSETS } = require('../config/stellarConfig');
-const { getPaymentLimits } = require('../utils/paymentLimits');
+const { encryptMemo, isEncryptionEnabled } = require('../utils/memoEncryption');
 const {
   convertToLocalCurrency,
   enrichPaymentWithConversion,
 } = require('../services/currencyConversionService');
-const { SCHOOL_WALLET, server } = require('../config/stellarConfig');
-const StellarSdk = require('@stellar/stellar-sdk');
 
+// Permanent error codes that should NOT be retried
 const PERMANENT_FAIL_CODES = ['TX_FAILED', 'MISSING_MEMO', 'INVALID_DESTINATION', 'UNSUPPORTED_ASSET', 'AMOUNT_TOO_LOW', 'AMOUNT_TOO_HIGH', 'UNDERPAID'];
 
 function wrapStellarError(err) {
@@ -64,7 +56,8 @@ async function getPaymentInstructions(req, res, next) {
 
     res.json({
       walletAddress: req.school.stellarAddress,
-      memo: req.params.studentId,
+      memo: encryptMemo(req.params.studentId),
+      memoEncrypted: isEncryptionEnabled(),
       acceptedAssets: Object.values(ACCEPTED_ASSETS).map(a => ({
         code: a.code,
         type: a.type,
@@ -106,7 +99,8 @@ async function createPaymentIntent(req, res, next) {
       });
     }
 
-    const memo = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const rawMemo = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const memo = encryptMemo(rawMemo);
     const ttlMs = parseInt(process.env.PAYMENT_INTENT_TTL_MS, 10) || 24 * 60 * 60 * 1000;
     const expiresAt = new Date(Date.now() + ttlMs);
 
