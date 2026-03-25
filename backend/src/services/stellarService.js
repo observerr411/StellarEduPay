@@ -99,6 +99,43 @@ async function detectMemoCollision(studentObjId, senderAddress, paymentAmount, e
   return { suspicious: false, reason: null };
 }
 
+/**
+ * Detect abnormal payment patterns:
+ *  1. Velocity — same sender exceeds RAPID_TX_LIMIT payments within RAPID_TX_WINDOW_MS.
+ *  2. Unusual amount — payment ratio vs expected fee exceeds UNUSUAL_AMOUNT_MULTIPLIER.
+ *
+ * Thresholds are env-configurable with safe defaults.
+ */
+async function detectAbnormalPatterns(senderAddress, paymentAmount, expectedFee, txDate) {
+  const RAPID_TX_WINDOW_MS      = parseInt(process.env.RAPID_TX_WINDOW_MS, 10)      || 10 * 60 * 1000;
+  const RAPID_TX_LIMIT          = parseInt(process.env.RAPID_TX_LIMIT, 10)          || 3;
+  const UNUSUAL_AMOUNT_MULTIPLIER = parseFloat(process.env.UNUSUAL_AMOUNT_MULTIPLIER) || 3;
+
+  const reasons = [];
+
+  if (senderAddress) {
+    const windowStart = new Date(txDate.getTime() - RAPID_TX_WINDOW_MS);
+    const recentCount = await Payment.countDocuments({
+      senderAddress,
+      confirmedAt: { $gte: windowStart },
+    });
+    if (recentCount >= RAPID_TX_LIMIT) {
+      reasons.push(`Sender ${senderAddress} made ${recentCount + 1} transactions within ${RAPID_TX_WINDOW_MS / 60000} minutes`);
+    }
+  }
+
+  if (expectedFee > 0) {
+    const ratio = paymentAmount / expectedFee;
+    if (ratio > UNUSUAL_AMOUNT_MULTIPLIER || ratio < 1 / UNUSUAL_AMOUNT_MULTIPLIER) {
+      reasons.push(`Unusual amount ${paymentAmount} vs expected fee ${expectedFee} (ratio ${ratio.toFixed(2)})`);
+    }
+  }
+
+  return reasons.length > 0
+    ? { suspicious: true, reason: reasons.join('; ') }
+    : { suspicious: false, reason: null };
+}
+
 async function syncPayments() {
   const transactions = await server
     .transactions()
@@ -132,6 +169,8 @@ async function syncPayments() {
 
     const [collision, abnormal] = await Promise.all([
       detectMemoCollision(student._id, senderAddress, paymentAmount, student.feeAmount, txDate),
+      detectAbnormalPatterns(senderAddress, paymentAmount, student.feeAmount, txDate),
+    ]);
       detectAbnormalPatterns(senderAddress, paymentAmount, student.feeAmount, txDate, null),
     ]);
 
