@@ -1,6 +1,6 @@
-'use strict';
+"use strict";
 
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 /**
  * Stores transactions that could not be verified due to a Stellar network outage.
@@ -9,24 +9,29 @@ const mongoose = require('mongoose');
  */
 const pendingVerificationSchema = new mongoose.Schema(
   {
-    schoolId:      { type: String, required: true, index: true },
-    txHash:        { type: String, required: true, unique: true, index: true },
-    studentId:     { type: String, default: null },
-    attempts:      { type: Number, default: 0 },
+    schoolId: { type: String, required: true, index: true },
+    txHash: { type: String, required: true, unique: true, index: true },
+    studentId: { type: String, default: null },
+    attempts: { type: Number, default: 0 },
     lastAttemptAt: { type: Date, default: null },
-    nextRetryAt:   { type: Date, default: Date.now, index: true },
+    nextRetryAt: { type: Date, default: Date.now, index: true },
     status: {
       type: String,
-      enum: ['pending', 'processing', 'resolved', 'dead_letter'],
-      default: 'pending',
+      enum: ["pending", "processing", "resolved", "dead_letter"],
+      default: "pending",
       index: true,
     },
-    lastError:  { type: String, default: null },
+    lastError: { type: String, default: null },
     resolvedAt: { type: Date, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 pendingVerificationSchema.index({ schoolId: 1, status: 1, nextRetryAt: 1 });
+// Retry worker: find pending items ready for retry
+pendingVerificationSchema.index({ status: 1, nextRetryAt: 1 });
 
-module.exports = mongoose.model('PendingVerification', pendingVerificationSchema);
+module.exports = mongoose.model(
+  "PendingVerification",
+  pendingVerificationSchema,
+);
