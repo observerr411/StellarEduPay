@@ -119,24 +119,19 @@ async function initializeServices() {
 // ── Startup ─────────────────────────────────────────────────────────────────────
 async function startApp() {
   const dbConnected = await initializeDatabase();
-  
+
   if (!dbConnected) {
     logger.error('Failed to connect to database. Exiting...');
     process.exit(1);
   }
-  
+
   await initializeServices();
-  
-  // Handle shutdown signals
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-  
   logger.info('Application startup complete');
 }
 
 // Start the application
 startApp();
-// MongoDB connection and service startup
+
 // ── Request timeout ───────────────────────────────────────────────────────────
 app.use((req, res, next) => {
   res.setTimeout(config.REQUEST_TIMEOUT_MS, () => {
@@ -179,6 +174,8 @@ app.use('/api/reminders', reminderRoutes);
 app.use('/api/disputes', disputeRoutes);
 app.get('/api/consistency', runConsistencyCheck);
 
+const { healthCheck } = require('./controllers/healthController');
+app.get('/health', healthCheck);
 app.get('/health', async (req, res) => {
   try {
     const retryQueueStatus = await getSystemStatus();
@@ -273,7 +270,7 @@ async function shutdown(signal) {
 
   server.close(async () => {
     try {
-      await mongoose.connection.close();
+      await database.disconnect();
       logger.info('MongoDB disconnected — clean exit');
       process.exit(0);
     } catch (err) {
