@@ -2,6 +2,8 @@
 
 const express = require('express');
 const router = express.Router();
+const { registerStudent, getAllStudents, getStudent, getPaymentSummary, bulkImportStudents } = require('../controllers/studentController');
+const multer = require('multer');
 const multer = require('multer');
 const {
   registerStudent,
