@@ -20,6 +20,7 @@ const database = require('./config/database');
 const { concurrentPaymentProcessor } = require('./services/concurrentPaymentProcessor');
 const { createConcurrentRequestMiddleware } = require('./middleware/concurrentRequestHandler');
 const { requestLogger } = require('./middleware/requestLogger');
+const { globalErrorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
 
 const app = express();
@@ -187,6 +188,11 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// 404 handler for undefined routes
+app.use(notFoundHandler);
+
+// Global error handler (must be last)
+app.use(globalErrorHandler);
 app.use((err, req, res, next) => {
   const statusMap = {
     TX_FAILED:              400,
